@@ -1,0 +1,6 @@
+# Comandos a ejecutar desde la terminal para cargar el dashboard al repositorio GitHub.
+
+cd C:\Users\adelarosa\Documents\GitHub\Ventas_EuphoriaSkin
+git add index.html
+git commit -m "Actualiza dashboard 08-08-2026"
+git push
