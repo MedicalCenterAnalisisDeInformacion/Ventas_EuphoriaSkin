@@ -6,10 +6,15 @@ import pandas as pd
 import numpy as np
 from datetime import date, timedelta
 # Ajustar rutas y el párametro
-EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/17-08-2026/Dataset.xlsx"
-OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/17-08-2026/index.html"
+EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/19-08-2026/Dataset.xlsx"
+OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/19-08-2026/index.html"
 BOL_EXCLUIR = ["BOLEUCH", "BOLEUGDE", "BOLEUMIN"]
-FECHA_BASE  = date(2026, 8, 17)
+FECHA_BASE  = date(2026, 8, 19)
+# ClaveSucursal de sucursales que NO tienen información de tickets disponible
+# (p.ej. por falta de folio "Movimiento" en el POS). Para estas, el conteo de
+# tickets del mes en curso se deja en blanco (None) en vez de 0, para no
+# confundir "sin dato" con "no vendió". Lista, por si en el futuro se agregan más.
+CLAVE_SUC_SIN_TICKETS = [300]
 # Lógica de procesamiento
 MESES_ES = ["enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre"]
@@ -105,11 +110,28 @@ def procesar_mes_curso(vmc, suc, bol_list):
     agg_t = vmc.groupby(["FechaStr","NombreSucursal"]).agg(
         tickets=("Movimiento","nunique")
     ).reset_index()
-    agg = agg_v.merge(agg_t, on=["FechaStr","NombreSucursal"], how="left")
-    agg["tickets"] = agg["tickets"].fillna(0).astype(int)
+    # FIX: se parte de agg_t (universo completo de tickets, sin excluir
+    # boletos) en vez de agg_v, para no perder combinaciones fecha+sucursal
+    # cuando ese día sólo hubo artículos de bol_list (antes esas filas
+    # desaparecían del resultado por completo, en vez de reportar 0 unidades
+    # con sus tickets correspondientes).
+    agg = agg_t.merge(agg_v, on=["FechaStr","NombreSucursal"], how="left")
+    for c in ["unidades","ventas","utilidad"]:
+        agg[c] = agg[c].fillna(0).round(2)
+    # ── Sucursales sin información de tickets: se dejan en blanco (None),
+    # no en 0, para no confundir "sin dato disponible" con "no vendió". ──
+    nombres_sin_tickets = set(
+        suc.loc[suc["ClaveSucursal"].isin(CLAVE_SUC_SIN_TICKETS), "NombreSucursal"]
+    )
+    mask_sin_tickets = agg["NombreSucursal"].isin(nombres_sin_tickets)
+    agg["tickets"] = agg["tickets"].fillna(0)
+    agg["tickets"] = agg["tickets"].astype(object)
+    agg.loc[~mask_sin_tickets, "tickets"] = agg.loc[~mask_sin_tickets, "tickets"].astype(int)
+    agg.loc[mask_sin_tickets, "tickets"] = None
+    if mask_sin_tickets.any() and nombres_sin_tickets:
+        print(f"ℹ️  [MesCurso] {int(mask_sin_tickets.sum())} fila(s) de sucursal(es) sin información de "
+              f"tickets ({', '.join(sorted(nombres_sin_tickets))}); se dejan en blanco en vez de 0.")
     agg["margen"]  = _margen_seguro(agg["utilidad"], agg["ventas"])
-    for c in ["ventas","utilidad"]:
-        agg[c] = agg[c].round(2)
     return agg
 def procesar_lineas(vm, art, suc, bol_list):
     vm = vm.copy()
@@ -150,12 +172,25 @@ def procesar_historico(vm, tkt, suc, bol_list):
     agg = agg_v.merge(agg_t, on=["Año","MesNum","ClaveSucursal"], how="outer")
     for c in ["unidades","ventas","utilidad"]:
         agg[c] = agg[c].fillna(0).round(2)
-    agg["tickets"] = agg["tickets"].fillna(0).astype(int)
     agg["Año"]    = agg["Año"].fillna(0).astype(int)
     agg["MesNum"] = agg["MesNum"].fillna(0).astype(int)
     suc_clean = suc.drop_duplicates(subset=["ClaveSucursal"])
     agg = agg.merge(suc_clean, on="ClaveSucursal", how="left")
     agg["NombreSucursal"] = agg["NombreSucursal"].fillna("OTRO")
+    # ── Misma regla que en procesar_mes_curso: sucursales sin información de
+    # tickets se dejan en blanco (None), no en 0, para no confundir "sin dato"
+    # con "no vendió". Aplica también a períodos históricos. ──
+    nombres_sin_tickets = set(
+        suc.loc[suc["ClaveSucursal"].isin(CLAVE_SUC_SIN_TICKETS), "NombreSucursal"]
+    )
+    mask_sin_tickets = agg["NombreSucursal"].isin(nombres_sin_tickets)
+    agg["tickets"] = agg["tickets"].fillna(0)
+    agg["tickets"] = agg["tickets"].astype(object)
+    agg.loc[~mask_sin_tickets, "tickets"] = agg.loc[~mask_sin_tickets, "tickets"].astype(int)
+    agg.loc[mask_sin_tickets, "tickets"] = None
+    if mask_sin_tickets.any() and nombres_sin_tickets:
+        print(f"ℹ️  [Histórico] {int(mask_sin_tickets.sum())} período(s) de sucursal(es) sin información de "
+              f"tickets ({', '.join(sorted(nombres_sin_tickets))}); se dejan en blanco en vez de 0.")
     agg["margen"] = _margen_seguro(agg["utilidad"], agg["ventas"])
     agg["PeriodoLabel"] = _formatear_periodo(agg["MesNum"], agg["Año"])
     agg = agg.sort_values(["Año","MesNum"]).reset_index(drop=True)
@@ -617,7 +652,7 @@ tr.fq-parent td{padding-top:10px;padding-bottom:10px}
   </div>
   <div class="header-right">
     <span class="hdate">Reporte Generado: __FECHA_VALOR__</span>
-    <div class="hbadge">DASHBOARD v1.4</div>
+    <div class="hbadge">DASHBOARD v1.5</div>
   </div>
 </header>
 <div class="filter-bar" id="filter-bar-suc">
@@ -675,9 +710,9 @@ tr.fq-parent td{padding-top:10px;padding-bottom:10px}
     <div class="kpi" style="--ac:#8A62AD"><div class="kpi-label">Unidades vendidas</div><div class="kpi-value" id="k-uni">—</div><div class="kpi-sub">Ventas mes en curso</div></div>
     <div class="kpi" style="--ac:#7030A0"><div class="kpi-label">Ventas $</div><div class="kpi-value purple" id="k-ventas">—</div><div class="kpi-sub" id="k-ventas-s">—</div></div>
     <div class="kpi" style="--ac:#541e82"><div class="kpi-label">Utilidad</div><div class="kpi-value purple" id="k-util">—</div><div class="kpi-sub" id="k-util-sub">Margen: —</div></div>
-    <div class="kpi" style="--ac:#494350"><div class="kpi-label">Tickets</div><div class="kpi-value" id="k-tkt">—</div><div class="kpi-sub">Volumen de ventas</div></div>
-    <div class="kpi" style="--ac:#937ca8"><div class="kpi-label">Ventas $ promedio por ticket</div><div class="kpi-value" id="k-vtkt">—</div><div class="kpi-sub">Ventas $ ÷ Tickets</div></div>
-    <div class="kpi" style="--ac:#baa3d4"><div class="kpi-label">Unidades promedio por Ticket</div><div class="kpi-value" id="k-utkt">—</div><div class="kpi-sub">Unidades ÷ Tickets</div></div>
+    <div class="kpi" style="--ac:#494350"><div class="kpi-label">Tickets</div><div class="kpi-value" id="k-tkt">—</div><div class="kpi-sub" id="k-tkt-sub">Volumen de ventas</div></div>
+    <div class="kpi" style="--ac:#937ca8"><div class="kpi-label">Ventas $ promedio por ticket</div><div class="kpi-value" id="k-vtkt">—</div><div class="kpi-sub" id="k-vtkt-sub">Ventas $ ÷ Tickets</div></div>
+    <div class="kpi" style="--ac:#baa3d4"><div class="kpi-label">Unidades promedio por Ticket</div><div class="kpi-value" id="k-utkt">—</div><div class="kpi-sub" id="k-utkt-sub">Unidades ÷ Tickets</div></div>
   </div>
   <div class="tc">
     <div class="card-head">
@@ -754,9 +789,9 @@ tr.fq-parent td{padding-top:10px;padding-bottom:10px}
     <div class="kpi" style="--ac:#8A62AD"><div class="kpi-label">Unidades vendidas</div><div class="kpi-value" id="ka-uni">—</div><div class="kpi-sub">Acumulado según selección</div></div>
     <div class="kpi" style="--ac:#7030A0"><div class="kpi-label">Ventas $</div><div class="kpi-value purple" id="ka-ventas">—</div><div class="kpi-sub" id="ka-ventas-s">—</div></div>
     <div class="kpi" style="--ac:#541e82"><div class="kpi-label">Utilidad</div><div class="kpi-value purple" id="ka-util">—</div><div class="kpi-sub" id="ka-util-sub">Margen: —</div></div>
-    <div class="kpi" style="--ac:#494350"><div class="kpi-label">Tickets</div><div class="kpi-value" id="ka-tkt">—</div><div class="kpi-sub">Volumen de ventas</div></div>
-    <div class="kpi" style="--ac:#937ca8"><div class="kpi-label">Ventas $ promedio por ticket</div><div class="kpi-value" id="ka-vtkt">—</div><div class="kpi-sub">Ventas $ ÷ Tickets</div></div>
-    <div class="kpi" style="--ac:#baa3d4"><div class="kpi-label">Unidades promedio por Ticket</div><div class="kpi-value" id="ka-utkt">—</div><div class="kpi-sub">Unidades ÷ Tickets</div></div>
+    <div class="kpi" style="--ac:#494350"><div class="kpi-label">Tickets</div><div class="kpi-value" id="ka-tkt">—</div><div class="kpi-sub" id="ka-tkt-sub">Volumen de ventas</div></div>
+    <div class="kpi" style="--ac:#937ca8"><div class="kpi-label">Ventas $ promedio por ticket</div><div class="kpi-value" id="ka-vtkt">—</div><div class="kpi-sub" id="ka-vtkt-sub">Ventas $ ÷ Tickets</div></div>
+    <div class="kpi" style="--ac:#baa3d4"><div class="kpi-label">Unidades promedio por Ticket</div><div class="kpi-value" id="ka-utkt">—</div><div class="kpi-sub" id="ka-utkt-sub">Unidades ÷ Tickets</div></div>
   </div>
   <div class="tc">
     <div class="card-head">
@@ -1244,27 +1279,49 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     function getDates()      { return [...new Set(RAW.map(r => r.FechaStr))].sort(); }
     function getActiveSucs() { return [...active].sort(); }
+    // tickets === null/undefined significa "sin información disponible" para
+    // esa sucursal (ver CLAVE_SUC_SIN_TICKETS en el backend). Al agregar,
+    // se suma como 0 para no romper el total. Se distingue:
+    //   - sinTickets: al menos una sucursal contribuyente no tiene el dato
+    //     (el total es PARCIAL, pero sí hay datos que mostrar)
+    //   - algunConDatos: al menos una sucursal contribuyente SÍ tiene el dato
+    //     (si esto es false, no hay nada que mostrar y el total real es
+    //     desconocido, no cero)
     function aggByDate(data){
         const m = {};
         data.forEach(r => {
-            if(!m[r.FechaStr]) m[r.FechaStr] = {unidades:0,ventas:0,utilidad:0,tickets:0};
+            if(!m[r.FechaStr]) m[r.FechaStr] = {unidades:0,ventas:0,utilidad:0,tickets:0,sinTickets:false,algunConDatos:false};
+            const tieneTickets = r.tickets !== null && r.tickets !== undefined;
             m[r.FechaStr].unidades  += r.unidades;
             m[r.FechaStr].ventas    += r.ventas;
             m[r.FechaStr].utilidad  += r.utilidad;
-            m[r.FechaStr].tickets   += r.tickets;
+            m[r.FechaStr].tickets   += tieneTickets ? r.tickets : 0;
+            if(!tieneTickets) m[r.FechaStr].sinTickets = true;
+            else m[r.FechaStr].algunConDatos = true;
         });
         return m;
     }
     function aggBySucursal(data){
         const m = {};
         data.forEach(r => {
-            if(!m[r.NombreSucursal]) m[r.NombreSucursal] = {NombreSucursal:r.NombreSucursal, unidades:0, ventas:0, utilidad:0, tickets:0};
+            if(!m[r.NombreSucursal]) m[r.NombreSucursal] = {NombreSucursal:r.NombreSucursal, unidades:0, ventas:0, utilidad:0, tickets:0, sinTickets:false, algunConDatos:false};
+            const tieneTickets = r.tickets !== null && r.tickets !== undefined;
             m[r.NombreSucursal].unidades += r.unidades;
             m[r.NombreSucursal].ventas   += r.ventas;
             m[r.NombreSucursal].utilidad += r.utilidad;
-            m[r.NombreSucursal].tickets  += r.tickets;
+            m[r.NombreSucursal].tickets  += tieneTickets ? r.tickets : 0;
+            if(!tieneTickets) m[r.NombreSucursal].sinTickets = true;
+            else m[r.NombreSucursal].algunConDatos = true;
         });
         return Object.values(m);
+    }
+    // Nombres (ordenados) de sucursales presentes en `data` cuyo campo
+    // 'tickets' viene en null (sin información disponible). Se usa para
+    // armar la nota "* No incluye tickets de: ..." en KPIs y tablas.
+    function nombresSinTicketsEn(data){
+        return [...new Set(
+            data.filter(r => r.tickets === null || r.tickets === undefined).map(r => r.NombreSucursal)
+        )].sort();
     }
     function dc(id){ if(charts[id]){ charts[id].destroy(); delete charts[id]; } }
     window.changeLineMetric = function(metric){
@@ -1439,28 +1496,44 @@ document.addEventListener("DOMContentLoaded", function() {
         const totV  = data.reduce((a,r) => a+r.ventas,   0);
         const totU  = data.reduce((a,r) => a+r.utilidad, 0);
         const totUn = data.reduce((a,r) => a+r.unidades, 0);
-        const totTk = data.reduce((a,r) => a+r.tickets,  0);
+        // r.tickets puede ser null (sucursal sin información disponible, ver
+        // CLAVE_SUC_SIN_TICKETS en el backend). El total de tickets se suma
+        // sólo con lo que sí se conoce (nulls -> 0), sin dejar de mostrar el
+        // resto de sucursales. Para los promedios por ticket (Ventas $ y
+        // Unidades ÷ Tickets), se usan SÓLO las filas con tickets conocidos
+        // tanto en numerador como denominador, para no inflar el promedio
+        // con ventas/unidades de una sucursal cuyos tickets se desconocen.
+        const sinTicketsNombres = nombresSinTicketsEn(data);
+        const huboSinTickets    = sinTicketsNombres.length > 0;
+        const notaSinTickets    = huboSinTickets ? `No incluye tickets de: ${sinTicketsNombres.join(', ')}. Información no disponible` : '';
+        const totTk    = data.reduce((a,r) => a + (r.tickets ?? 0), 0);
+        const conTicketsData = data.filter(r => r.tickets !== null && r.tickets !== undefined);
+        const totV_ct  = conTicketsData.reduce((a,r) => a+r.ventas,   0);
+        const totUn_ct = conTicketsData.reduce((a,r) => a+r.unidades, 0);
         document.getElementById('k-uni').textContent      = fN(totUn);
         document.getElementById('k-ventas').textContent   = fF(totV);
         document.getElementById('k-ventas-s').textContent = activeSucs.length + ' sucursal(es)';
         document.getElementById('k-util').textContent     = fF(totU);
         document.getElementById('k-util-sub').textContent = 'Margen: ' + fP(totV>0 ? totU/totV : 0);
-        document.getElementById('k-tkt').textContent      = fN(totTk);
-        document.getElementById('k-vtkt').textContent     = totTk>0 ? fF(totV/totTk) : '—';
-        document.getElementById('k-utkt').textContent     = totTk>0 ? (totUn/totTk).toFixed(1) : '—';
-        updateTabla(dates, byDate);
+        document.getElementById('k-tkt').textContent       = fN(totTk) + (huboSinTickets ? ' *' : '');
+        document.getElementById('k-tkt-sub').textContent   = huboSinTickets ? '* ' + notaSinTickets : 'Volumen de ventas';
+        document.getElementById('k-vtkt').textContent      = totTk>0 ? fF(totV_ct/totTk) + (huboSinTickets ? ' *' : '') : '—';
+        document.getElementById('k-vtkt-sub').textContent  = huboSinTickets ? '* ' + notaSinTickets : 'Ventas $ ÷ Tickets';
+        document.getElementById('k-utkt').textContent      = totTk>0 ? (totUn_ct/totTk).toFixed(1) + (huboSinTickets ? ' *' : '') : '—';
+        document.getElementById('k-utkt-sub').textContent  = huboSinTickets ? '* ' + notaSinTickets : 'Unidades ÷ Tickets';
+        updateTabla(dates, byDate, sinTicketsNombres);
         updateChart('ventas',  dates, byDate, activeSucs, multi);
         updateChart('tickets', dates, byDate, activeSucs, multi);
         fitTables();
     }
-    function updateTabla(dates, byDate){
+    function updateTabla(dates, byDate, sinTicketsNombres){
         const tbody = document.getElementById('tabla-body');
         const valid = dates.filter(d => byDate[d]);
         if(!valid.length){
             tbody.innerHTML = '<tr><td colspan="7" class="empty">Selecciona sucursales para mapear la grilla.</td></tr>';
             return;
         }
-        let tUn=0,tV=0,tU=0,tTk=0;
+        let tUn=0,tV=0,tU=0,tTk=0,huboSinTickets=false;
         const rows = valid.map(d => {
             const r  = byDate[d];
             const mg = r.ventas>0 ? r.utilidad/r.ventas : 0;
@@ -1468,10 +1541,23 @@ document.addEventListener("DOMContentLoaded", function() {
             const dn = DAYS[new Date(d+'T12:00:00').getDay()];
             const mAbr = MESES_ABR[parseInt(d.slice(5,7),10)-1];
             tUn+=r.unidades; tV+=r.ventas; tU+=r.utilidad; tTk+=r.tickets;
-            return `<tr><td class="date" data-label="Fecha">${d.slice(8)} ${mAbr}</td><td class="dayname" data-label="Día">${dn}</td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${pill}">${fP(mg)}</span></td><td class="r" data-label="Tickets"><b>${fN(r.tickets)}</b></td></tr>`;
+            if(r.sinTickets) huboSinTickets = true;
+            // Sólo se deja en blanco si NINGUNA sucursal activa ese día tiene
+            // dato de tickets (algunConDatos=false). Si hay al menos una con
+            // dato, se muestra la suma disponible (parcial) con un asterisco,
+            // en vez de ocultar todo el número.
+            const tkCell = !r.algunConDatos
+                ? '<span title="Sin información de tickets disponible" style="color:#c3bcc9">—</span>'
+                : `<b>${fN(r.tickets)}</b>${r.sinTickets ? ' <span title="No incluye tickets de sucursal(es) sin información disponible" style="color:#c3bcc9;font-weight:700">*</span>' : ''}`;
+            return `<tr><td class="date" data-label="Fecha">${d.slice(8)} ${mAbr}</td><td class="dayname" data-label="Día">${dn}</td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${pill}">${fP(mg)}</span></td><td class="r" data-label="Tickets">${tkCell}</td></tr>`;
         }).join('');
         const totMg = tV>0 ? tU/tV : 0;
-        tbody.innerHTML = rows + `<tr class="total-row"><td data-label="" colspan="2"><b>TOTAL PERÍODO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${fN(tTk)}</td></tr>`;
+        const totTkTexto = fN(tTk) + (huboSinTickets ? ' *' : '');
+        const notaPie = (sinTicketsNombres && sinTicketsNombres.length)
+            ? `* No incluye tickets de: ${sinTicketsNombres.join(', ')}. Información no disponible.`
+            : '* Sin información de tickets disponible para al menos una sucursal en algún día; el total no la incluye.';
+        tbody.innerHTML = rows + `<tr class="total-row"><td data-label="" colspan="2"><b>TOTAL PERÍODO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${totTkTexto}</td></tr>`
+            + (huboSinTickets ? `<tr><td colspan="7" style="font-size:.65rem;color:#a39cad;text-align:right;border:none;padding-top:4px">${notaPie}</td></tr>` : '');
     }
     function updateChartGeneric(chartId, field, sourceData, dates, byDate, activeSucs, multi){
         dc(chartId);
@@ -1617,14 +1703,24 @@ document.addEventListener("DOMContentLoaded", function() {
             tbody.innerHTML = '<tr><td colspan="6" class="empty">Selecciona sucursales para ver el comparativo.</td></tr>';
             return;
         }
-        let tUn=0,tV=0,tU=0,tTk=0;
+        let tUn=0,tV=0,tU=0,tTk=0,huboSinTickets=false;
         const rows = data.map(r => {
             const mg = r.ventas>0 ? r.utilidad/r.ventas : 0;
             tUn+=r.unidades; tV+=r.ventas; tU+=r.utilidad; tTk+=r.tickets;
-            return `<tr><td data-label="Sucursal"><span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:${SC[r.NombreSucursal]||'#888'};margin-right:7px"></span><b>${r.NombreSucursal}</b></td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${mg>=.50?'hi':'mi'}">${fP(mg)}</span></td><td class="r" data-label="Tickets">${fN(r.tickets)}</td></tr>`;
+            if(r.sinTickets) huboSinTickets = true;
+            const tkCell = !r.algunConDatos
+                ? '<span title="Sin información de tickets disponible" style="color:#c3bcc9">—</span>'
+                : `${fN(r.tickets)}${r.sinTickets ? ' <span title="Parcial: algunas fechas sin información de tickets" style="color:#c3bcc9;font-weight:700">*</span>' : ''}`;
+            return `<tr><td data-label="Sucursal"><span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:${SC[r.NombreSucursal]||'#888'};margin-right:7px"></span><b>${r.NombreSucursal}</b></td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${mg>=.50?'hi':'mi'}">${fP(mg)}</span></td><td class="r" data-label="Tickets">${tkCell}</td></tr>`;
         }).join('');
         const totMg = tV>0 ? tU/tV : 0;
-        tbody.innerHTML = rows + `<tr class="total-row"><td data-label=""><b>TOTAL MES EN CURSO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${fN(tTk)}</td></tr>`;
+        const totTkTexto = fN(tTk) + (huboSinTickets ? ' *' : '');
+        const nombresSinDatos = data.filter(r => r.sinTickets).map(r => r.NombreSucursal);
+        const notaPie = nombresSinDatos.length
+            ? `* No incluye tickets de: ${nombresSinDatos.join(', ')}. Información no disponible.`
+            : '* Sin información de tickets disponible para al menos una sucursal; el total no la incluye.';
+        tbody.innerHTML = rows + `<tr class="total-row"><td data-label=""><b>TOTAL MES EN CURSO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${totTkTexto}</td></tr>`
+            + (huboSinTickets ? `<tr><td colspan="6" style="font-size:.65rem;color:#a39cad;text-align:right;border:none;padding-top:4px">${notaPie}</td></tr>` : '');
     }
     function updateChartSucursalActual(){
         dc('sucursalactual');
@@ -1665,7 +1761,14 @@ document.addEventListener("DOMContentLoaded", function() {
                         labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',padding:10,color:'#615e66',font:{family:"'Segoe UI', sans-serif",size:10,weight:'600'}}},
                     datalabels:{display:false},
                     tooltip:{...PREMIUM_TOOLTIP_OPTS, callbacks:{
-                        label: ctx => ctx.dataset.yAxisID==='y2' ? ` Margen: ${ctx.raw.toFixed(2)}%` : ` ${ctx.dataset.label}: ${isMoneda?fF(ctx.raw):fN(ctx.raw)}`
+                        label: ctx => {
+                            if(ctx.dataset.yAxisID==='y2') return ` Margen: ${ctx.raw.toFixed(2)}%`;
+                            const r = data[ctx.dataIndex];
+                            if(currentSucMetric==='tickets' && r && r.sinTickets){
+                                return r.algunConDatos ? ' Tickets: parcial (algunas fechas sin dato)' : ' Tickets: sin información disponible';
+                            }
+                            return ` ${ctx.dataset.label}: ${isMoneda?fF(ctx.raw):fN(ctx.raw)}`;
+                        }
                     }}
                 },
                 scales:{
@@ -1687,15 +1790,28 @@ document.addEventListener("DOMContentLoaded", function() {
         const totU  = data.reduce((a,r) => a+r.unidades, 0);
         const totV  = data.reduce((a,r) => a+r.ventas,   0);
         const totUt = data.reduce((a,r) => a+r.utilidad, 0);
-        const totTk = data.reduce((a,r) => a+r.tickets,  0);
+        // Misma regla que en el mes en curso: r.tickets puede ser null para
+        // sucursales/períodos sin información de tickets. El total se suma
+        // sólo con lo conocido; los promedios por ticket usan sólo las filas
+        // con tickets conocidos tanto en numerador como denominador.
+        const sinTicketsNombres = nombresSinTicketsEn(data);
+        const huboSinTickets    = sinTicketsNombres.length > 0;
+        const notaSinTickets    = huboSinTickets ? `No incluye tickets de: ${sinTicketsNombres.join(', ')}. Información no disponible.` : '';
+        const totTk    = data.reduce((a,r) => a + (r.tickets ?? 0), 0);
+        const conTicketsData = data.filter(r => r.tickets !== null && r.tickets !== undefined);
+        const totV_ct  = conTicketsData.reduce((a,r) => a+r.ventas,   0);
+        const totU_ct  = conTicketsData.reduce((a,r) => a+r.unidades, 0);
         document.getElementById('ka-uni').textContent      = fN(totU);
         document.getElementById('ka-ventas').textContent   = fF(totV);
         document.getElementById('ka-ventas-s').textContent = getActiveSucs().length + ' sucursal(es) · ' + activeMeses.size + ' período(s)';
         document.getElementById('ka-util').textContent     = fF(totUt);
         document.getElementById('ka-util-sub').textContent = 'Margen: ' + fP(totV>0 ? totUt/totV : 0);
-        document.getElementById('ka-tkt').textContent      = fN(totTk);
-        document.getElementById('ka-vtkt').textContent     = totTk>0 ? fF(totV/totTk) : '—';
-        document.getElementById('ka-utkt').textContent     = totTk>0 ? (totU/totTk).toFixed(1) : '—';
+        document.getElementById('ka-tkt').textContent       = fN(totTk) + (huboSinTickets ? ' *' : '');
+        document.getElementById('ka-tkt-sub').textContent   = huboSinTickets ? '* ' + notaSinTickets : 'Volumen de ventas';
+        document.getElementById('ka-vtkt').textContent      = totTk>0 ? fF(totV_ct/totTk) + (huboSinTickets ? ' *' : '') : '—';
+        document.getElementById('ka-vtkt-sub').textContent  = huboSinTickets ? '* ' + notaSinTickets : 'Ventas $ ÷ Tickets';
+        document.getElementById('ka-utkt').textContent      = totTk>0 ? (totU_ct/totTk).toFixed(1) + (huboSinTickets ? ' *' : '') : '—';
+        document.getElementById('ka-utkt-sub').textContent  = huboSinTickets ? '* ' + notaSinTickets : 'Unidades ÷ Tickets';
     }
     function updateAcumulado(){
         updateKPIsAcumulado();
@@ -1717,25 +1833,40 @@ document.addEventListener("DOMContentLoaded", function() {
         filtered.forEach(r => {
             if(!periodoMap[r.PeriodoLabel]){
                 periodoMap[r.PeriodoLabel] = {PeriodoLabel:r.PeriodoLabel, Año:r.Año, MesNum:r.MesNum,
-                    unidades:0, ventas:0, utilidad:0, tickets:0};
+                    unidades:0, ventas:0, utilidad:0, tickets:0, sinTickets:false, algunConDatos:false};
                 periodoOrder.push(r.PeriodoLabel);
             }
+            const tieneTickets = r.tickets !== null && r.tickets !== undefined;
             periodoMap[r.PeriodoLabel].unidades  += r.unidades;
             periodoMap[r.PeriodoLabel].ventas    += r.ventas;
             periodoMap[r.PeriodoLabel].utilidad  += r.utilidad;
-            periodoMap[r.PeriodoLabel].tickets   += r.tickets;
+            periodoMap[r.PeriodoLabel].tickets   += tieneTickets ? r.tickets : 0;
+            if(!tieneTickets) periodoMap[r.PeriodoLabel].sinTickets = true;
+            else periodoMap[r.PeriodoLabel].algunConDatos = true;
         });
         const sorted = periodoOrder
             .map(p => periodoMap[p])
             .sort((a,b) => a.Año!==b.Año ? a.Año-b.Año : a.MesNum-b.MesNum);
-        let tUn=0,tV=0,tU=0,tTk=0;
-        sorted.forEach(r => { tUn+=r.unidades; tV+=r.ventas; tU+=r.utilidad; tTk+=r.tickets; });
+        let tUn=0,tV=0,tU=0,tTk=0,huboSinTickets=false;
+        sorted.forEach(r => { tUn+=r.unidades; tV+=r.ventas; tU+=r.utilidad; tTk+=r.tickets; if(r.sinTickets) huboSinTickets = true; });
         const totMg = tV>0 ? tU/tV : 0;
         const rows = sorted.map(r => {
             const mg = r.ventas>0 ? r.utilidad/r.ventas : 0;
-            return `<tr><td class="date" data-label="Período">${r.PeriodoLabel}</td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${mg>=.50?'hi':'mi'}">${fP(mg)}</span></td><td class="r" data-label="Tickets"><b>${fN(r.tickets)}</b></td></tr>`;
+            // Igual que en el mes en curso: sólo se deja en blanco si NINGÚN
+            // dato de tickets está disponible para ese período; si hay al
+            // menos una sucursal con dato, se muestra la suma parcial + '*'.
+            const tkCell = !r.algunConDatos
+                ? '<span title="Sin información de tickets disponible" style="color:#c3bcc9">—</span>'
+                : `<b>${fN(r.tickets)}</b>${r.sinTickets ? ' <span title="No incluye tickets de sucursal(es) sin información disponible" style="color:#c3bcc9;font-weight:700">*</span>' : ''}`;
+            return `<tr><td class="date" data-label="Período">${r.PeriodoLabel}</td><td class="r" data-label="Unidades">${fN(r.unidades)}</td><td class="r" data-label="Ventas $"><b>${fF(r.ventas)}</b></td><td class="r" data-label="Utilidad">${fF(r.utilidad)}</td><td class="r" data-label="Margen"><span class="pill ${mg>=.50?'hi':'mi'}">${fP(mg)}</span></td><td class="r" data-label="Tickets">${tkCell}</td></tr>`;
         }).join('');
-        tbody.innerHTML = rows + `<tr class="total-row"><td data-label=""><b>TOTAL HISTÓRICO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${fN(tTk)}</td></tr>`;
+        const totTkTexto = fN(tTk) + (huboSinTickets ? ' *' : '');
+        const nombresSinDatosHist = nombresSinTicketsEn(filtered);
+        const notaPieHist = nombresSinDatosHist.length
+            ? `* No incluye tickets de: ${nombresSinDatosHist.join(', ')}. Información no disponible.`
+            : '* Sin información de tickets disponible para al menos un período; el total no la incluye.';
+        tbody.innerHTML = rows + `<tr class="total-row"><td data-label=""><b>TOTAL HISTÓRICO</b></td><td class="r" data-label="Unidades">${fN(tUn)}</td><td class="r" data-label="Ventas $">${fF(tV)}</td><td class="r" data-label="Utilidad">${fF(tU)}</td><td class="r" data-label="Margen"><span class="pill ${totMg>=.50?'hi':'mi'}">${fP(totMg)}</span></td><td class="r" data-label="Tickets">${totTkTexto}</td></tr>`
+            + (huboSinTickets ? `<tr><td colspan="6" style="font-size:.65rem;color:#a39cad;text-align:right;border:none;padding-top:4px">${notaPieHist}</td></tr>` : '');
         const activeSucs = getActiveSucs();
         const multi      = activeSucs.length > 1;
         const isMoneda   = currentHistMetric==='ventas' || currentHistMetric==='utilidad';
