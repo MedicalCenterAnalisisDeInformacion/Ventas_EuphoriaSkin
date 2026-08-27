@@ -674,7 +674,7 @@ tr.fq-parent td{padding-top:10px;padding-bottom:10px}
   <div class="header-logo"><img src="data:image/png;base64,__LOGO_B64__" alt="Euphoria Skin"></div>
   <div class="header-right">
     <span class="hdate">Reporte Generado: __FECHA_VALOR__</span>
-    <div class="hbadge">DASHBOARD v1.7</div>
+    <div class="hbadge">DASHBOARD v1.8</div>
   </div>
 </header>
 <div class="filter-bar" id="filter-bar-suc">
@@ -1071,6 +1071,16 @@ document.addEventListener("DOMContentLoaded", function() {
     // hecho de cambiar de pestaña.
     let activeWanted = new Set(SUCS);
     let activeMeses = new Set(PERIODOS);
+    // ── Flags de "selección exclusiva deliberada" por eje ──
+    // true = el usuario fijó, con un clic simple, UN solo elemento en ese
+    // eje (y sigue así). false = el eje está en estado "amplio" (varios
+    // elementos, sea por selección múltiple o por auto-expansión previa).
+    // Se usan para decidir si, al hacer clic exclusivo en el OTRO eje, se
+    // debe auto-expandir (eje amplio) o respetar la selección puntual
+    // existente (eje con selección exclusiva y aún válida) — así es posible
+    // combinar 1 sucursal + 1 mes sin que un clic sobrescriba al otro.
+    let sucursalExclusiva = false;
+    let mesExclusivo = false;
     let charts      = {};
     let currentLineMetric = 'ventas';
     let currentLineMetricActual = 'ventas';
@@ -1152,6 +1162,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 if(multi){
                     if(active.has(s)){ active.delete(s); activeWanted.delete(s); btn.classList.remove('active'); }
                     else { active.add(s); activeWanted.add(s); btn.classList.add('active'); }
+                    sucursalExclusiva = false; // ya no es "un solo elemento elegido"
+                    refreshMesesDisponibilidad(false); // Ctrl/Cmd+clic: sólo filtra, nunca expande
                 } else {
                     // Estilo segmentador de Excel: un clic simple selecciona
                     // ÚNICAMENTE ese elemento, sin importar cuántos había
@@ -1164,8 +1176,24 @@ document.addEventListener("DOMContentLoaded", function() {
                     document.querySelectorAll('#suc-btns .suc-btn').forEach(b => {
                         b.classList.toggle('active', b.dataset.sucursal === s);
                     });
+                    sucursalExclusiva = true;
+                    // Primero se filtra siempre (oculta/desmarca meses
+                    // inválidos para esta sucursal).
+                    refreshMesesDisponibilidad(false);
+                    // ¿Auto-expandir a TODOS los meses válidos? Sólo si el
+                    // eje de meses NO tenía una selección exclusiva propia
+                    // (mesExclusivo=false, estado "amplio"), o si el mes que
+                    // el usuario había fijado dejó de ser válido para esta
+                    // sucursal (activeMeses quedó vacío tras el filtro). Si
+                    // el usuario ya había fijado un mes y sigue siendo
+                    // válido, se respeta tal cual — así es posible combinar
+                    // 1 sucursal + 1 mes sin que se sobrescriban entre sí.
+                    const debeExpandirMeses = !mesExclusivo || activeMeses.size === 0;
+                    if(debeExpandirMeses){
+                        refreshMesesDisponibilidad(true);
+                        mesExclusivo = false; // resultado de auto-expansión, no de elección del usuario
+                    }
                 }
-                refreshMesesDisponibilidad(true);
                 updateAll();
             });
             wrap.appendChild(btn);
@@ -1185,6 +1213,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 if(multi){
                     if(activeMeses.has(p)){ activeMeses.delete(p); btn.classList.remove('active'); }
                     else { activeMeses.add(p); btn.classList.add('active'); }
+                    mesExclusivo = false; // ya no es "un solo elemento elegido"
+                    refreshSucursalesDisponibilidad(false); // Ctrl/Cmd+clic: sólo filtra, nunca expande
                 } else {
                     // Mismo comportamiento estilo Excel que en sucursales:
                     // clic simple = selección exclusiva de ese mes.
@@ -1193,8 +1223,28 @@ document.addEventListener("DOMContentLoaded", function() {
                     document.querySelectorAll('#mes-btns .mes-btn').forEach(b => {
                         b.classList.toggle('active', b.dataset.periodo === p);
                     });
+                    mesExclusivo = true;
+                    // Primero se filtra siempre (oculta/desmarca sucursales
+                    // inválidas para este mes).
+                    refreshSucursalesDisponibilidad(false);
+                    // ¿Auto-expandir a TODAS las sucursales válidas? Sólo si
+                    // el eje de sucursales NO tenía una selección exclusiva
+                    // propia (sucursalExclusiva=false, estado "amplio"), o
+                    // si la sucursal fijada dejó de ser válida para este mes
+                    // (active quedó vacío tras el filtro). Si el usuario ya
+                    // había fijado una sucursal y sigue siendo válida, se
+                    // respeta tal cual — permitiendo combinar 1 sucursal +
+                    // 1 mes sin que se sobrescriban entre sí. Esto también
+                    // conserva el comportamiento de "crecimiento": si el eje
+                    // de sucursales estaba amplio (varias/todas), al moverse
+                    // a un mes con más sucursales disponibles (p.ej. nuevas
+                    // aperturas), esas se auto-agregan.
+                    const debeExpandirSucursales = !sucursalExclusiva || active.size === 0;
+                    if(debeExpandirSucursales){
+                        refreshSucursalesDisponibilidad(true);
+                        sucursalExclusiva = false; // resultado de auto-expansión, no de elección del usuario
+                    }
                 }
-                refreshSucursalesDisponibilidad(true);
                 if(currentTab === 'resumenacumulado') updateAcumulado();
                 if(currentTab === 'toparticulos') updateTopArticulos();
                 if(currentTab === 'lineascategoria') updateLineasCategoria();
@@ -1298,7 +1348,8 @@ document.addEventListener("DOMContentLoaded", function() {
         } else {
             seleccionables.forEach(b => { active.add(b.dataset.sucursal); activeWanted.add(b.dataset.sucursal); b.classList.add('active'); });
         }
-        refreshMesesDisponibilidad(true);
+        sucursalExclusiva = false; // acción masiva: ya no es "un solo elemento elegido"
+        refreshMesesDisponibilidad();
         updateAll();
     };
     window.toggleAllMeses = function(){
@@ -1310,7 +1361,8 @@ document.addEventListener("DOMContentLoaded", function() {
         } else {
             seleccionables.forEach(b => { activeMeses.add(b.dataset.periodo); b.classList.add('active'); });
         }
-        refreshSucursalesDisponibilidad(true);
+        mesExclusivo = false; // acción masiva: ya no es "un solo elemento elegido"
+        refreshSucursalesDisponibilidad();
         if(currentTab === 'resumenacumulado') updateAcumulado();
         if(currentTab === 'toparticulos') updateTopArticulos();
         if(currentTab === 'lineascategoria') updateLineasCategoria();
