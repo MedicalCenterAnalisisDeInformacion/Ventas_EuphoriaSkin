@@ -63,11 +63,17 @@ def _cargar_imagen_b64(path: str) -> str:
         print(f"⚠️  No se encontró el logo en {path}; se omite del header.")
         return ""
     return base64.b64encode(p.read_bytes()).decode("utf-8")
-def formatear_fechas(base: date):
-    ayer = base - timedelta(days=1)
+def formatear_fechas(base: date, es_cierre: bool = False):
+    # Mismo criterio que 'fecha_max_global' en procesar_presupuesto:
+    # es_cierre=True  -> 'base' ya es el último día CON dato completo
+    #                    (cierre de mes), se usa tal cual.
+    # es_cierre=False -> 'base' es "hoy" en una corrida diaria dentro del
+    #                    mes, con datos completos sólo hasta AYER
+    #                    (comportamiento original), por lo que se resta un día.
+    ultimo_dia_dato = base if es_cierre else base - timedelta(days=1)
     fecha_reporte = f"{base.day} de {MESES_ES[base.month-1].capitalize()} de {base.year}"
-    dia_semana    = DIAS_ES[ayer.weekday()].capitalize()
-    fecha_info    = f"{dia_semana}, {ayer.day} de {MESES_ES[ayer.month-1]} de {ayer.year}"
+    dia_semana    = DIAS_ES[ultimo_dia_dato.weekday()].capitalize()
+    fecha_info    = f"{dia_semana}, {ultimo_dia_dato.day} de {MESES_ES[ultimo_dia_dato.month-1]} de {ultimo_dia_dato.year}"
     mes_header    = MESES_ES[base.month-1].capitalize()
     return fecha_reporte, fecha_info, mes_header
 def periodo_label_actual(base: date) -> str:
@@ -2759,7 +2765,7 @@ def main():
         # con datos completos sólo hasta ayer (corrida diaria normal).
         presupuesto_agg = procesar_presupuesto(agg, objetivos_df, suc, FECHA_BASE, es_cierre=ES_CIERRE_MES)
         print("Generando HTML final...")
-        fecha_reporte, fecha_info, mes_header = formatear_fechas(FECHA_BASE)
+        fecha_reporte, fecha_info, mes_header = formatear_fechas(FECHA_BASE, es_cierre=ES_CIERRE_MES)
         current_period_label = periodo_label_actual(FECHA_BASE)
         html = generar_html(agg, linea_agg, historico_agg, top_art_agg, lineas_cat_agg, fabricantes_agg,
                             presupuesto_agg, lista_sucursales, fecha_reporte, fecha_info, mes_header,
