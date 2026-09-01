@@ -7,10 +7,10 @@ import pandas as pd
 import numpy as np
 from datetime import date, timedelta
 # Ajustar rutas y el párametro
-EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/26-08-2026/Dataset.xlsx"
-OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/08_Agosto/26-08-2026/index.html"
+EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/09_Septiembre/01-09-2026/Dataset.xlsx"
+OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/09_Septiembre/01-09-2026/index.html"
 BOL_EXCLUIR = ["BOLEUCH", "BOLEUGDE", "BOLEUMIN"]
-FECHA_BASE  = date(2026, 8, 26)
+FECHA_BASE  = date(2026, 8, 31)
 
 CLAVE_SUC_SIN_TICKETS = [300]
 
