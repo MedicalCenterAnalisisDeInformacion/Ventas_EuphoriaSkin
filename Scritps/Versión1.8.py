@@ -11,6 +11,7 @@ EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentas
 OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/09_Septiembre/01-09-2026/index.html"
 BOL_EXCLUIR = ["BOLEUCH", "BOLEUGDE", "BOLEUMIN"]
 FECHA_BASE  = date(2026, 8, 31)
+ES_CIERRE_MES = True
 
 CLAVE_SUC_SIN_TICKETS = [300]
 
@@ -271,9 +272,18 @@ def procesar_fabricantes(vm, art_dim, suc, bol_list):
     for c in ["ventas","utilidad"]:
         agg[c] = agg[c].round(2)
     return agg
-def procesar_presupuesto(agg, objetivos, suc, fecha_base):
+def procesar_presupuesto(agg, objetivos, suc, fecha_base, es_cierre=False):
     dias_mes = calendar.monthrange(fecha_base.year, fecha_base.month)[1]
-    fecha_max_global = pd.Timestamp(fecha_base) - pd.Timedelta(days=1)
+    # ── fecha_max_global: último día con datos REALES completos ──
+    # es_cierre=True  -> FECHA_BASE ya trae el día completo (cierre de mes),
+    #                    así que se usa tal cual, sin restar un día.
+    # es_cierre=False -> FECHA_BASE es "hoy" en una corrida diaria dentro del
+    #                    mes, con datos completos sólo hasta AYER (comportamiento
+    #                    original), por lo que se resta un día.
+    if es_cierre:
+        fecha_max_global = pd.Timestamp(fecha_base)
+    else:
+        fecha_max_global = pd.Timestamp(fecha_base) - pd.Timedelta(days=1)
     primer_dia_mes = pd.Timestamp(year=fecha_base.year, month=fecha_base.month, day=1)
     fin_mes = pd.Timestamp(year=fecha_base.year, month=fecha_base.month, day=dias_mes)
     resumen_ventas = agg.groupby("NombreSucursal").agg(
@@ -380,7 +390,15 @@ def procesar_presupuesto(agg, objetivos, suc, fecha_base):
         dias_operativos = max(0, (fin_mes - inicio).days + 1)
         dias_transcurridos = max(0, (fecha_max_global - inicio).days + 1)
         return pd.Series({"diasOperativosMes": dias_operativos, "diasTranscurridos": dias_transcurridos})
-    resumen[["diasOperativosMes", "diasTranscurridos"]] = resumen.apply(_calcular_dias, axis=1)
+    # Guard: si 'resumen' queda vacío (p.ej. inicio de mes sin ventas ni
+    # presupuesto todavía en ninguna sucursal), .apply(axis=1) sobre un
+    # DataFrame vacío no puede inferir la forma de 2 columnas que espera la
+    # asignación de abajo, y truena con "Columns must be same length as key".
+    if resumen.empty:
+        resumen["diasOperativosMes"] = pd.Series(dtype="int64")
+        resumen["diasTranscurridos"] = pd.Series(dtype="int64")
+    else:
+        resumen[["diasOperativosMes", "diasTranscurridos"]] = resumen.apply(_calcular_dias, axis=1)
     resumen["pronostico"] = np.where(
         resumen["diasTranscurridos"] > 0,
         resumen["ventasActual"] / resumen["diasTranscurridos"] * resumen["diasOperativosMes"],
@@ -1253,30 +1271,6 @@ document.addEventListener("DOMContentLoaded", function() {
             wrap.appendChild(btn);
         });
     }
-    // ── Recalcula disponibilidad cruzada y desmarca automáticamente las
-    // selecciones sin datos. Los botones sin datos se QUITAN del layout
-    // (display:none), no sólo se atenúan, para que el segmentador muestre
-    // únicamente lo disponible. El criterio de "tiene datos" depende de la
-    // pestaña activa: en 'resumenactual' (Resumen Mes en Curso) se basa en
-    // RAW (venta real del mes en curso, ya que esa pestaña no usa el
-    // segmentador de meses); en el resto de pestañas con histórico, se basa
-    // en HISTORICO cruzado contra los meses actualmente seleccionados.
-    // ── Parámetro 'autoSeleccionar': cuando el cambio se originó en el OTRO
-    // segmentador (p.ej. se marcó una sucursal nueva), las opciones que
-    // pasan a estar disponibles se seleccionan automáticamente por defecto
-    // (en vez de quedar habilitadas pero sin marcar), para que el usuario
-    // no tenga que volver a activarlas manualmente. NO se usa al recalcular
-    // por un simple cambio de pestaña (ahí sólo se ocultan las inválidas,
-    // sin tocar la selección vigente). ──
-    // ── autoSeleccionar: usado cuando el cambio se originó directamente en
-    // el segmentador de Meses (el usuario acaba de marcar/desmarcar un
-    // período) — activa automáticamente cualquier sucursal que pase a ser
-    // válida y aún no lo esté, y la registra en 'activeWanted'.
-    // restaurarDesdeMemoria: usado al cambiar de pestaña — NO agrega
-    // sucursales nuevas por sí solo, pero SÍ reactiva las que el usuario ya
-    // había elegido (activeWanted) y que vuelven a ser válidas bajo el
-    // criterio de la nueva pestaña, sin tocar las que el usuario desmarcó
-    // deliberadamente. ──
     function refreshSucursalesDisponibilidad(autoSeleccionar, restaurarDesdeMemoria){
         let cambio = false;
         const criterioMesActual = (currentTab === 'resumenactual');
@@ -2760,7 +2754,10 @@ def main():
         # El pronóstico vs. presupuesto usa 'agg', que ya sólo trae el mes en
         # curso real (p.ej. agosto), por lo que días transcurridos/operativos
         # y el pronóstico de cierre no se contaminan con ventas de julio.
-        presupuesto_agg = procesar_presupuesto(agg, objetivos_df, suc, FECHA_BASE)
+        # 'es_cierre=ES_CIERRE_MES' controla si FECHA_BASE se toma como
+        # último día YA incluido en los datos (cierre de mes) o como "hoy"
+        # con datos completos sólo hasta ayer (corrida diaria normal).
+        presupuesto_agg = procesar_presupuesto(agg, objetivos_df, suc, FECHA_BASE, es_cierre=ES_CIERRE_MES)
         print("Generando HTML final...")
         fecha_reporte, fecha_info, mes_header = formatear_fechas(FECHA_BASE)
         current_period_label = periodo_label_actual(FECHA_BASE)
