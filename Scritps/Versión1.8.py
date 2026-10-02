@@ -6,17 +6,13 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
-# Ajustar rutas y el párametro
-EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/09_Septiembre/11-09-2026/Dataset.xlsx"
-OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/09_Septiembre/11-09-2026/index.html"
+EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/10_Octubre/02-10-2026/Dataset.xlsx"
+OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/10_Octubre/02-10-2026/index.html"
 BOL_EXCLUIR = ["BOLEUCH", "BOLEUGDE", "BOLEUMIN"]
-FECHA_BASE  = date(2026, 9, 11)
-ES_CIERRE_MES = False
-
+FECHA_BASE  = date(2026, 9, 30)
+ES_CIERRE_MES = True
 CLAVE_SUC_SIN_TICKETS = [300]
-
 LOGO_PATH = r"C:\Users\adelarosa\Documents\Reportes\Dashboards\DashboardVentasDiarias_Euphoria\Logos\logo.png"
-# Lógica de procesamiento
 MESES_ES = ["enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre"]
 DIAS_ES  = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
@@ -64,12 +60,6 @@ def _cargar_imagen_b64(path: str) -> str:
         return ""
     return base64.b64encode(p.read_bytes()).decode("utf-8")
 def formatear_fechas(base: date, es_cierre: bool = False):
-    # Mismo criterio que 'fecha_max_global' en procesar_presupuesto:
-    # es_cierre=True  -> 'base' ya es el último día CON dato completo
-    #                    (cierre de mes), se usa tal cual.
-    # es_cierre=False -> 'base' es "hoy" en una corrida diaria dentro del
-    #                    mes, con datos completos sólo hasta AYER
-    #                    (comportamiento original), por lo que se resta un día.
     ultimo_dia_dato = base if es_cierre else base - timedelta(days=1)
     fecha_reporte = f"{base.day} de {MESES_ES[base.month-1].capitalize()} de {base.year}"
     dia_semana    = DIAS_ES[ultimo_dia_dato.weekday()].capitalize()
@@ -128,16 +118,9 @@ def procesar_mes_curso(vmc, suc, bol_list):
     agg_t = vmc.groupby(["FechaStr","NombreSucursal"]).agg(
         tickets=("Movimiento","nunique")
     ).reset_index()
-    # FIX: se parte de agg_t (universo completo de tickets, sin excluir
-    # boletos) en vez de agg_v, para no perder combinaciones fecha+sucursal
-    # cuando ese día sólo hubo artículos de bol_list (antes esas filas
-    # desaparecían del resultado por completo, en vez de reportar 0 unidades
-    # con sus tickets correspondientes).
     agg = agg_t.merge(agg_v, on=["FechaStr","NombreSucursal"], how="left")
     for c in ["unidades","ventas","utilidad"]:
         agg[c] = agg[c].fillna(0).round(2)
-    # ── Sucursales sin información de tickets: se dejan en blanco (None),
-    # no en 0, para no confundir "sin dato disponible" con "no vendió". ──
     nombres_sin_tickets = set(
         suc.loc[suc["ClaveSucursal"].isin(CLAVE_SUC_SIN_TICKETS), "NombreSucursal"]
     )
@@ -195,9 +178,6 @@ def procesar_historico(vm, tkt, suc, bol_list):
     suc_clean = suc.drop_duplicates(subset=["ClaveSucursal"])
     agg = agg.merge(suc_clean, on="ClaveSucursal", how="left")
     agg["NombreSucursal"] = agg["NombreSucursal"].fillna("OTRO")
-    # ── Misma regla que en procesar_mes_curso: sucursales sin información de
-    # tickets se dejan en blanco (None), no en 0, para no confundir "sin dato"
-    # con "no vendió". Aplica también a períodos históricos. ──
     nombres_sin_tickets = set(
         suc.loc[suc["ClaveSucursal"].isin(CLAVE_SUC_SIN_TICKETS), "NombreSucursal"]
     )
@@ -280,12 +260,6 @@ def procesar_fabricantes(vm, art_dim, suc, bol_list):
     return agg
 def procesar_presupuesto(agg, objetivos, suc, fecha_base, es_cierre=False):
     dias_mes = calendar.monthrange(fecha_base.year, fecha_base.month)[1]
-    # ── fecha_max_global: último día con datos REALES completos ──
-    # es_cierre=True  -> FECHA_BASE ya trae el día completo (cierre de mes),
-    #                    así que se usa tal cual, sin restar un día.
-    # es_cierre=False -> FECHA_BASE es "hoy" en una corrida diaria dentro del
-    #                    mes, con datos completos sólo hasta AYER (comportamiento
-    #                    original), por lo que se resta un día.
     if es_cierre:
         fecha_max_global = pd.Timestamp(fecha_base)
     else:
@@ -299,10 +273,6 @@ def procesar_presupuesto(agg, objetivos, suc, fecha_base, es_cierre=False):
         fechaMin=("FechaStr", "min"),
     ).reset_index()
     resumen_ventas["fechaMinDt"] = pd.to_datetime(resumen_ventas["fechaMin"])
-    # Base: TODAS las sucursales de la dimensión (para incluir también las que
-    # aún no tienen venta este mes, con pronóstico 0). Se conserva ClaveSucursal
-    # porque 'ObjetivosVentas' puede traer la clave numérica en vez del nombre,
-    # y porque se usará para ordenar la tabla final por número de sucursal.
     suc_clean = suc.drop_duplicates(subset=["NombreSucursal"])[["ClaveSucursal", "NombreSucursal"]].copy()
     suc_clean["NombreSucursal"] = suc_clean["NombreSucursal"].astype(str).str.strip()
     resumen_ventas["NombreSucursal"] = resumen_ventas["NombreSucursal"].astype(str).str.strip()
@@ -310,7 +280,6 @@ def procesar_presupuesto(agg, objetivos, suc, fecha_base, es_cierre=False):
     for c in ["unidadesActual", "ventasActual", "utilidadActual"]:
         resumen[c] = resumen[c].fillna(0)
     resumen["margen"] = _margen_seguro(resumen["utilidadActual"], resumen["ventasActual"])
-    # ── Presupuesto / Objetivo de ventas / Fecha de apertura ──
     col_suc = _detectar_columna(objetivos, "sucursal")
     col_pre = _detectar_columna(objetivos, "presupuesto")
     col_ape = _detectar_columna(objetivos, "apertura")
@@ -396,10 +365,6 @@ def procesar_presupuesto(agg, objetivos, suc, fecha_base, es_cierre=False):
         dias_operativos = max(0, (fin_mes - inicio).days + 1)
         dias_transcurridos = max(0, (fecha_max_global - inicio).days + 1)
         return pd.Series({"diasOperativosMes": dias_operativos, "diasTranscurridos": dias_transcurridos})
-    # Guard: si 'resumen' queda vacío (p.ej. inicio de mes sin ventas ni
-    # presupuesto todavía en ninguna sucursal), .apply(axis=1) sobre un
-    # DataFrame vacío no puede inferir la forma de 2 columnas que espera la
-    # asignación de abajo, y truena con "Columns must be same length as key".
     if resumen.empty:
         resumen["diasOperativosMes"] = pd.Series(dtype="int64")
         resumen["diasTranscurridos"] = pd.Series(dtype="int64")
@@ -475,9 +440,6 @@ def generar_html(agg, linea_agg, historico_agg, top_art_agg, lineas_cat_agg, fab
                  presupuesto_agg, lista_sucursales, fecha_reporte, fecha_info, mes_header,
                  current_period_label, resumenes_anteriores=None):
     resumenes_anteriores = resumenes_anteriores or []
-    # ── Pestañas extra "Resumen <Mes>" (mes(es) cerrados detectados mezclados
-    # en VentasMesCurso a inicios de mes). Si no hay ninguno, estas variables
-    # quedan vacías y el dashboard se ve exactamente igual que antes. ──
     tabs_nav_extra = ""
     tabs_content_extra = ""
     resumenes_ant_dict = {}
@@ -2735,15 +2697,10 @@ def main():
         suc = dim[["Clave sucursal","Nombre de sucursal"]].dropna().drop_duplicates()
         suc.columns = ["ClaveSucursal","NombreSucursal"]
         suc["ClaveSucursal"] = pd.to_numeric(suc["ClaveSucursal"], errors="coerce").fillna(0).astype(int)
-        # Los segmentadores de sucursal (botones) se ordenan por FechaApertura
-        # (de más antigua a más reciente); las sucursales sin esa fecha se
-        # colocan al final, ordenadas por ClaveSucursal (ID) ascendente.
         lista_sucursales = ordenar_sucursales_por_apertura(suc, objetivos_df)
         art     = dim[["Artículo","Línea"]].dropna().drop_duplicates("Artículo")
         art_dim = dim[["Artículo","Línea","Categoría","Descripción","Fabricante"]].dropna(subset=["Artículo"]).drop_duplicates("Artículo")
         print("Procesando datos...")
-        # ── Separar VentasMesCurso: a inicios de mes puede traer mezcladas
-        # ventas del mes que ya cerró junto con las del mes en curso. ──
         vmc_actual, meses_anteriores = separar_mes_actual_anterior(vmc, FECHA_BASE)
         agg = procesar_mes_curso(vmc_actual, suc, BOL_EXCLUIR)  # SOLO mes en curso real
         resumenes_anteriores = []
@@ -2757,12 +2714,6 @@ def main():
         top_art_agg     = procesar_top_articulos(vm, art_dim, suc, BOL_EXCLUIR)
         lineas_cat_agg  = procesar_lineas_categoria(vm, art_dim, suc, BOL_EXCLUIR)
         fabricantes_agg = procesar_fabricantes(vm, art_dim, suc, BOL_EXCLUIR)
-        # El pronóstico vs. presupuesto usa 'agg', que ya sólo trae el mes en
-        # curso real (p.ej. agosto), por lo que días transcurridos/operativos
-        # y el pronóstico de cierre no se contaminan con ventas de julio.
-        # 'es_cierre=ES_CIERRE_MES' controla si FECHA_BASE se toma como
-        # último día YA incluido en los datos (cierre de mes) o como "hoy"
-        # con datos completos sólo hasta ayer (corrida diaria normal).
         presupuesto_agg = procesar_presupuesto(agg, objetivos_df, suc, FECHA_BASE, es_cierre=ES_CIERRE_MES)
         print("Generando HTML final...")
         fecha_reporte, fecha_info, mes_header = formatear_fechas(FECHA_BASE, es_cierre=ES_CIERRE_MES)
