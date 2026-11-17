@@ -6,11 +6,11 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
-EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/11_Noviembre/02-11-2026/Dataset.xlsx"
-OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/11_Noviembre/02-11-2026/index.html"
+EXCEL_PATH  = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/11_Noviembre/13-11-2026/Dataset.xlsx"
+OUTPUT_PATH = r"C:/Users/adelarosa/Documents/Reportes/Dashboards/DashboardVentasDiarias_Euphoria/11_Noviembre/13-11-2026/index.html"
 BOL_EXCLUIR = ["BOLEUCH", "BOLEUGDE", "BOLEUMIN"]
-FECHA_BASE  = date(2026, 10, 31)
-ES_CIERRE_MES = True
+FECHA_BASE  = date(2026, 11, 13)
+ES_CIERRE_MES = False
 CLAVE_SUC_SIN_TICKETS = [300]
 LOGO_PATH = r"C:\Users\adelarosa\Documents\Reportes\Dashboards\DashboardVentasDiarias_Euphoria\Logos\logo.png"
 MESES_ES = ["enero","febrero","marzo","abril","mayo","junio",
